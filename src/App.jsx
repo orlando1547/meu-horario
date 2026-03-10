@@ -1,9 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { auth, loginGoogle, logout } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
+
+import { Plus } from "lucide-react";
 import { 
   Calendar, 
   UserCheck, 
   GraduationCap, 
-  Plus, 
   Minus, 
   AlertTriangle, 
   X, 
@@ -27,22 +30,14 @@ const COLORS = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
   const [activeTab, setActiveTab] = useState('attendance');
   
-  // ESTADOS COM PERSISTÊNCIA (localStorage)
-  const [subjects, setSubjects] = useState(() => {
-    try {
-      const saved = localStorage.getItem('mh_subjects');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-
-  const [schedule, setSchedule] = useState(() => {
-    try {
-      const saved = localStorage.getItem('mh_schedule');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) { return {}; }
-  });
+  // Estados iniciais vazios (serão preenchidos após o login)
+  const [subjects, setSubjects] = useState([]);
+  const [schedule, setSchedule] = useState({});
 
   const [isSlotModalOpen, setIsSlotModalOpen] = useState(false);
   const [isSubjectModalOpen, setIsSubjectModalOpen] = useState(false);
@@ -55,16 +50,45 @@ export default function App() {
   const [newSubject, setNewSubject] = useState({ name: '', ch: '' });
   const [newEval, setNewEval] = useState({ name: '', date: '', weight: 1, grade: '' });
 
-  // Salvamento automático
+  // --- EFEITOS DE AUTENTICAÇÃO E DADOS ---
   useEffect(() => {
-    localStorage.setItem('mh_subjects', JSON.stringify(subjects));
-  }, [subjects]);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('mh_schedule', JSON.stringify(schedule));
-  }, [schedule]);
+    if (user) {
+      try {
+        const savedSubjects = localStorage.getItem(`mh_subjects_${user.uid}`);
+        if (savedSubjects) setSubjects(JSON.parse(savedSubjects));
 
-  // Lógica de horas por dia
+        const savedSchedule = localStorage.getItem(`mh_schedule_${user.uid}`);
+        if (savedSchedule) setSchedule(JSON.parse(savedSchedule));
+      } catch (e) { 
+        console.error("Erro ao carregar dados", e); 
+      }
+    } else {
+      setSubjects([]);
+      setSchedule({});
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem(`mh_subjects_${user.uid}`, JSON.stringify(subjects));
+    }
+  }, [subjects, user]);
+
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem(`mh_schedule_${user.uid}`, JSON.stringify(schedule));
+    }
+  }, [schedule, user]);
+
+  // --- LÓGICA DO APP ---
   const hoursPerSubjectPerDay = useMemo(() => {
     const map = {};
     DAYS.forEach(day => {
@@ -147,6 +171,35 @@ export default function App() {
     setSubjects(subjects.map(s => s.id === id ? { ...s, absences: Math.max(0, s.absences + delta) } : s));
   };
 
+  // --- RENDERIZAÇÃO CONDICIONAL (LOADING E LOGIN) ---
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-indigo-600 font-bold animate-pulse">
+        Carregando...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white p-10 rounded-[2rem] shadow-xl text-center max-w-sm w-full border border-slate-100 animate-in zoom-in-95">
+          <h1 className="text-2xl font-black mb-2 text-indigo-600 tracking-tighter uppercase italic">
+            Meu Horário
+          </h1>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-8">Painel Acadêmico</p>
+          <button
+            onClick={loginGoogle}
+            className="w-full bg-indigo-600 text-white px-6 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-indigo-100 active:scale-95 transition-all"
+          >
+            Entrar com Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDERIZAÇÃO PRINCIPAL DO APP ---
   return (
     <div className="min-h-screen bg-slate-50 pb-32 font-sans text-slate-900 overflow-x-hidden">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 py-4 flex justify-between items-center shadow-sm">
@@ -154,12 +207,20 @@ export default function App() {
           <h1 className="text-xl font-black text-indigo-600 tracking-tighter uppercase leading-none">MEU HORÁRIO</h1>
           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 italic">Painel Acadêmico</p>
         </div>
-        <button 
-          onClick={() => setIsSubjectModalOpen(true)}
-          className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-2 rounded-xl text-[10px] font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all whitespace-nowrap"
-        >
-          <Plus size={14} /> CADASTRAR
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={logout}
+            className="text-rose-500 hover:text-rose-600 text-[10px] font-black uppercase tracking-widest transition-colors"
+          >
+            Sair
+          </button>
+          <button 
+            onClick={() => setIsSubjectModalOpen(true)}
+            className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-2 rounded-xl text-[10px] font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all whitespace-nowrap"
+          >
+            <Plus size={14} /> CADASTRAR
+          </button>
+        </div>
       </header>
 
       <main className="max-w-5xl mx-auto p-4 space-y-6">
@@ -250,7 +311,7 @@ export default function App() {
                              <p className="text-[11px] font-black uppercase tracking-tight truncate">{subject.name}</p>
                              <p className="text-[9px] font-bold text-indigo-200 uppercase">{hours} {hours === 1 ? 'Hora' : 'Horas'}</p>
                            </div>
-                           <button onClick={() => updateAbsences(subId, hours)} className="bg-white text-indigo-600 text-[9px] font-black px-4 py-2 rounded-lg shadow-sm uppercase">Faltei</button>
+                           <button onClick={() => updateAbsences(subId, hours)} className="bg-white text-indigo-600 text-[9px] font-black px-4 py-2 rounded-lg shadow-sm uppercase active:scale-95 transition-transform">Faltei</button>
                          </div>
                        );
                      })
